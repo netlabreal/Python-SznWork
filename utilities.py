@@ -108,6 +108,23 @@ class Utilities(object):
             cursor.close()
             return rez
 
+    # --------Poisk usluga code in table---------------------------------------#
+    def search_uslugacode(self, ucode):
+        rez = None
+        try:
+            cursor = self.gl_conn.cursor()
+            # query data from table months
+            cursor.execute("Select id from uslugi WHERE code= %s ", (ucode,))
+            # Resultat
+            row = cursor.fetchone()
+            if row is not None:
+                rez = row[0]
+        except Error as er:
+            print("Can not read table szn_ls! {}".format(er))
+        finally:
+            cursor.close()
+            return rez
+
     # --------Poisk usluga name in table---------------------------------------#
     def search_usluganame(self, uname):
         rez = None
@@ -218,6 +235,23 @@ class Utilities(object):
 
     # --------Poisk saldo in saldo table---------------------------------------#
 
+    def search_saldo_ams5(self, ls, month, uslid):
+        rez = None
+        try:
+            cursor = self.gl_conn.cursor()
+            # query data from table months
+            cursor.execute("Select * from oborots_ams5 WHERE ls= %s and month=%s and usl=%s", (ls, month, uslid,))
+            # Resultat
+            row = cursor.fetchone()
+            if row is not None:
+                rez = row
+        except Error as er:
+            print("Can not read table szn_ls! {}".format(er))
+        finally:
+            cursor.close()
+            return rez
+    # --------Poisk saldo in saldo table---------------------------------------#
+
     def search_saldo(self, ls, month, uslid):
         rez = None
         try:
@@ -310,6 +344,56 @@ class Utilities(object):
                     try:
                         # Vnesenie data in MySql
                         cursor.execute("INSERT INTO oborots (ls,month,usl,plosh,prop,tarif,vx,nach,vist,opl,isx,org) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)", (ls, mon, usl,plosh,prop,tarif,vx,nach,vist,opl,isx,org,))
+                        self.gl_conn.commit()
+                        print(unicode(ls) + " -> INSERTED")
+                    except Error as err:
+                        print(format(err))
+            dbf_f.close()
+        except Exception as e:
+            print(e)
+        finally:
+            cursor.close()
+
+    # -----------------------------------------------#
+    # --------Open dbf with oborots and write it in MySql---------------------------------------#
+
+    def per_oborots_mysql_ams(self, path):
+        try:
+            cursor = self.gl_conn.cursor()
+            rr = os.path.isfile(path)
+            # open dbf with data
+            dbf_f = dbf.Dbf(path)
+            # Kol-vo zapisey dbf
+            count = dbf_f.recordCount
+            if count != 0:
+                for record in dbf_f:
+                    # ls from dbf
+                    ls = self.search_ins_ls(record['ls'])
+                    # Usluga from dbf
+                    usl = self.search_ins_usl(str(record['usluga']).decode('cp866'))
+                    # month from dbf
+                    mon = self.search_ins_month(record['month'])
+                    # org from dbf
+                    org = self.search_ins_org(str(record['org']).decode('cp866'))
+                    # prop from dbf
+                    prop = record['prop']
+                    # plosh from dbf
+                    plosh = record['plosh']
+                    # tarif from dbf
+                    tarif = record['tarif']
+                    # vx from dbf
+                    vx = record['vx']
+                    # nach from dbf
+                    nach = record['nach']
+                    # vist from dbf
+                    vist = record['vist']
+                    # opl from dbf
+                    opl = record['opl']
+                    # isx from dbf
+                    isx = record['isx']
+                    try:
+                        # Vnesenie data in MySql
+                        cursor.execute("INSERT INTO oborots_ams5 (ls,month,usl,plosh,prop,tarif,vx,nach,vist,opl,isx,org) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)", (ls, mon, usl,plosh,prop,tarif,vx,nach,vist,opl,isx,org,))
                         self.gl_conn.commit()
                         print(unicode(ls) + " -> INSERTED")
                     except Error as err:
@@ -425,6 +509,123 @@ class Utilities(object):
                     dbf_file.close()
                     print("File %s is edited!" % path)
 
+    # -------------Proxod files v papke path i zapolnenie dbf------------------------#
+    def walk_data_correct_dbf_new(self, papka):
+        col = 0;
+        # Tek papka
+        cwd = os.getcwd()
+        # Tek papka + path
+        path_i = unicode(os.path.join(cwd, papka))
+        # Perebor Tek Papka + path
+        for name in os.listdir(path_i):
+            # put k filu
+            path = os.path.join(path_i, name)
+            if os.path.isfile(path):
+                try:
+                    dbf_file = dbf.Dbf(path)
+                    for rec in dbf_file:
+                        col += 1
+                        ls = self.search_ls(rec['LS'])
+                        if ls is not None:
+                            rmon = rec['DATEP']
+                            month = self.search_month(rec['DATEP'])
+                            if month is not None:
+                                if int(rec['S50_ID']) == 8001:
+                                    usl = self.search_uslugacode(int(rec['S50_ID']))
+                                else:
+                                    usl = self.search_uslugacode(int(rec['S50_ID_N']))
+                                if usl is not None:
+                                    rs = self.search_saldo(ls, month, usl)
+                                    if rs is not None:
+                                        rec['PL'] = rs[10]
+                                        rec['KOLP'] = rs[11]
+                                        #***********************************
+                                        if(usl == 7 or usl == 8 or usl == 9):
+                                            if(rs[4] != 0):
+                                                rec['NORM'] = round(rs[6] / rs[4], 2)
+                                        else:
+                                            rec['NORM'] = rs[10]
+                                        #***********************************
+                                        rec['PRIZN'] = 1
+                                        rec['TARIF'] = rs[4]
+                                        rec['FAKTP'] = rs[6]
+                                        rec['FAKTPER'] = rs[7]
+                                        rec['MESD'] = self.kolmes(ls, rmon, usl)
+                                        # Save data in dbf
+                                        rec.store()
+                                    else:
+                                        rec['PRIZN'] = 1
+                                        # Save data in dbf
+                                        rec.store()
+                                else:
+                                    print("Not found usluga! Record %s"%col)
+                            else:
+                                print("Not found month! Record %s"%col)
+                        else:
+                            print("Not found ls! Record %s"%col)
+                except Exception as e:
+                    print(e)
+                finally:
+                    dbf_file.close()
+                    print("File %s is edited!" % path)
+
+    # -------------Proxod files v papke path i zapolnenie dbf------------------------#
+    def walk_data_correct_dbf_ams5(self, papka):
+        col = 0;
+        # Tek papka
+        cwd = os.getcwd()
+        # Tek papka + path
+        path_i = unicode(os.path.join(cwd, papka))
+        # Perebor Tek Papka + path
+        for name in os.listdir(path_i):
+            # put k filu
+            path = os.path.join(path_i, name)
+            if os.path.isfile(path):
+                try:
+                    dbf_file = dbf.Dbf(path)
+                    for rec in dbf_file:
+                        col += 1
+                        ls = self.search_ls(rec['LS'])
+                        if ls is not None:
+                            rmon = rec['DATEP']
+                            month = self.search_month(rec['DATEP'])
+                            if month is not None:
+                                usl = self.search_usluganame(str(rec['GKU']).decode('cp866'))
+                                if usl is not None:
+                                    rs = self.search_saldo_ams5(ls, month, usl)
+                                    if rs is not None:
+                                        rec['PL'] = rs[10]
+                                        rec['KOLP'] = rs[11]
+                                        #***********************************
+                                        if(usl == 7 or usl == 8 or usl == 9):
+                                            if(rs[4] != 0):
+                                                rec['NORM'] = round(rs[6] / rs[4], 2)
+                                        else:
+                                            rec['NORM'] = rs[10]
+                                        #***********************************
+                                        rec['PRIZN'] = 1
+                                        rec['TARIF'] = rs[4]
+                                        rec['FAKTP'] = rs[6]
+                                        rec['FAKTPER'] = rs[7]
+                                        rec['MESD'] = self.kolmes_ams5(ls, rmon, usl)
+                                        # Save data in dbf
+                                        rec.store()
+                                    else:
+                                        rec['PRIZN'] = 1
+                                        # Save data in dbf
+                                        rec.store()
+                                else:
+                                    print("Not found usluga! Record %s"%col)
+                            else:
+                                print("Not found month! Record %s"%col)
+                        else:
+                            print("Not found ls! Record %s"%col)
+                except Exception as e:
+                    print(e)
+                finally:
+                    dbf_file.close()
+                    print("File %s is edited!" % path)
+
     # -------------Proxod files v papke path i prostavit ls in dbf------------------------#
 
     def walk_files_edit_dbf(self, papka):
@@ -450,7 +651,7 @@ class Utilities(object):
         # Tek papka
         cwd = os.getcwd()
         # Tek papka + path
-        path_i = unicode(os.path.join(cwd, 'cppn'))
+        path_i = unicode(os.path.join(cwd, 'sod'))
         # create itog.dbf
         # res_dbf = dbf.Dbf(unicode(os.path.join(path_i, 'itog.dbf')), new=True)
         # Perebor Tek Papka + path
@@ -563,10 +764,59 @@ class Utilities(object):
                 if r is not None:
                     oplata += r[8]
                     if first != 0 and m_id != r[2]:
-                        dolg.append(r[6])
+                        if r[7] > 0:
+                            dolg.append(r[7])
+                        else:
+                            oplata -= r[7]
                     else:
                         if m_id != r[2]:
-                            dolg.append(round(r[5]+r[7], 2))
+                            d_tmp = round(r[5]+r[7], 2)
+                            if d_tmp > 0:
+                                dolg.append(d_tmp)
+                            else:
+                                oplata -= d_tmp
+                        first = 1
+        # if list is not empty
+        if len(dolg) > 0:
+            for k in dolg:
+                oplata = round(oplata - k, 2)
+                if oplata < 0:
+                    col_mon += 1
+        return col_mon
+
+    # -----------Kol-vo months dolga------------------------------------#
+
+    def kolmes_ams5(self, ls, month, uslid):
+        # kol-vo mes dolga
+        col_mon = 0
+        # id month in Mysql
+        m_id = self.search_month(month)
+        # all months in table
+        allmon = self.all_months()
+        # list of oborots if months <= month
+        rez = [self.search_saldo_ams5(ls, mon[0], uslid) for mon in allmon if mon[1] <= month]
+        # first month
+        first = 0
+        # list of dolga
+        dolg = []
+        # oplata for all months
+        oplata = 0
+        if rez is not None:
+            for r in rez:
+                if r is not None:
+                    oplata += r[8]
+                    if first != 0 and m_id != r[2]:
+                        if r[7] > 0:
+                            dolg.append(r[7])
+                        else:
+                            oplata -= r[7]
+                    else:
+                        if m_id != r[2]:
+                            d_tmp = round(r[5]+r[7], 2)
+                            if d_tmp > 0:
+                                dolg.append(d_tmp)
+                            else:
+                                oplata -= d_tmp
                         first = 1
         # if list is not empty
         if len(dolg) > 0:
